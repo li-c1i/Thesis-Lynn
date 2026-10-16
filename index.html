@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Almost There</title>
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <style>
 :root{--red:#ff2a22;--white:#f5f7ff}
 *{box-sizing:border-box}html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#09152f;color:var(--white);font-family:Arial,Helvetica,sans-serif}body{cursor:crosshair}
@@ -75,7 +76,16 @@ let room=null,solo=false,spec=false,uMax=0,lastT={},sig='',me={j:Date.now()+Math
 const sun={shape:'sun',color:'#ff3d35'};
 function setMe(p){Object.assign(me,p);if(room)room.presence(p).catch(()=>{})}
 function everyone(){const a=[{id:'me',p:me,me:true}];if(room)room.peers().forEach(x=>{if(x.sameTab||x.kind!=='viewer'||!x.presence||!x.presence.j)return;a.push({id:x.peer,p:x.presence,me:false})});return a.sort((x,y)=>x.p.j-y.p.j)}
-(async()=>{try{const r=typeof claude!=='undefined'?await claude.use('room'):null;if(r){room=r;r.presence(me).catch(()=>{});r.onPeers(refresh,()=>{})}else solo=true}catch(e){solo=true}refresh()})();
+function mqttRoom(){
+ let code=location.hash.slice(1).toLowerCase().replace(/[^a-z0-9]/g,'');if(!code){code=Math.random().toString(36).slice(2,6);location.hash=code}
+ const id=Math.random().toString(36).slice(2,10),base='almost-there-x7/'+code+'/',topic=base+id,P={},cbs=[];let mine={};
+ const cl=mqtt.connect('wss://broker.emqx.io:8084/mqtt',{clientId:'at_'+id,keepalive:30,reconnectPeriod:2000,will:{topic,payload:'',retain:true,qos:0}});
+ const pub=()=>{if(cl.connected)cl.publish(topic,JSON.stringify({p:mine,ts:Date.now()}),{retain:true})},fire=()=>cbs.forEach(f=>f());
+ cl.on('connect',()=>{cl.subscribe(base+'+');pub()});
+ cl.on('message',(t,m)=>{const k=t.slice(base.length);if(k===id)return;if(!m.length)delete P[k];else{try{P[k]={p:JSON.parse(m.toString()).p,seen:Date.now()}}catch(e){return}}fire()});
+ setInterval(()=>{pub();let ch=false;for(const k in P)if(Date.now()-P[k].seen>9000){delete P[k];ch=true}if(ch)fire()},3000);
+ return{presence(p){Object.assign(mine,p);pub();return Promise.resolve()},peers:()=>Object.keys(P).map(k=>({peer:k,sameTab:false,kind:'viewer',presence:P[k].p})),onPeers(f){cbs.push(f)}}}
+(async()=>{try{let r=null;if(typeof claude!=='undefined')r=await claude.use('room');if(!r&&typeof mqtt!=='undefined')r=mqttRoom();if(r){room=r;r.presence(me).catch(()=>{});r.onPeers(refresh,()=>{})}else solo=true}catch(e){solo=true}refresh()})();
 setInterval(()=>refresh(),500);
 function renderMaker(){const on=me.ph==='create';$('preview').innerHTML=svg(me.s,me.c);
 $('shapeRow').innerHTML='';Object.keys(SH).forEach(s=>{const b=document.createElement('button');b.className='pick'+(s===me.s?' on':'');b.disabled=!on;b.innerHTML=svg(s,me.c);b.setAttribute('aria-label',s);b.onclick=()=>{setMe({s});renderMaker();refresh()};$('shapeRow').appendChild(b)});
